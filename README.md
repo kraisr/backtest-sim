@@ -10,6 +10,7 @@ BacktestSim is a Go backtesting project for running a Moving Average Crossover s
 - Compare against buy-and-hold
 - Calculate return, max drawdown, win rate, and excess return
 - Run everything from the terminal
+- Expose basic HTTP API endpoints for local backtest runs
 
 ## Run
 
@@ -32,6 +33,38 @@ Show CLI help:
 ```bash
 go run ./cmd/cli -h
 ```
+
+## API
+
+Run the local API server from the backend module:
+
+```bash
+go run ./cmd/api
+```
+
+Available endpoints:
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/health` | Returns API health status |
+| `GET` | `/api/tickers` | Lists supported tickers |
+| `GET` | `/api/strategies` | Lists supported strategies |
+| `POST` | `/api/runs` | Runs a synchronous Moving Average Crossover backtest |
+
+`POST /api/runs` expects a JSON body with:
+
+```json
+{
+  "ticker": "SPY",
+  "initial_cash": 10000,
+  "fee_bps": 0,
+  "slippage_bps": 0,
+  "short_window": 20,
+  "long_window": 50
+}
+```
+
+The response includes strategy return, benchmark return, excess return, max drawdown, win rate, signal count, and trade count.
 
 ## Example Output
 
@@ -67,11 +100,13 @@ Example:
 
 ```text
 backend/cmd/cli          CLI entrypoint
+backend/cmd/api          API server entrypoint
 backend/internal/data    CSV loading and market data models
 backend/internal/backtest strategy, portfolio, benchmark, and metrics logic
+backend/internal/api     HTTP routes and handlers
 data/SPY.csv             sample historical data
 ```
 
 ## Next
 
-Next milestone: add a Go API server around the local backtesting engine.
+Next milestone: add Redis-backed queueing and worker processes for asynchronous runs.
