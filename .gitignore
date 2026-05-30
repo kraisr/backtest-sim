@@ -32,6 +32,9 @@ go.work.sum
 node_modules/
 dist/
 
+# Frontend generated cache
+frontend/.vite/
+
 # Editor/IDE
 # .idea/
 # .vscode/
