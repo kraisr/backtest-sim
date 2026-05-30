@@ -72,7 +72,21 @@ Available endpoints:
 }
 ```
 
-The response includes strategy return, benchmark return, excess return, max drawdown, win rate, signal count, and trade count.
+The create response includes a run id, queued status, and status URL. Poll the status URL to see whether the run is queued, running, completed, or failed.
+
+Completed run results include strategy return, benchmark return, excess return, max drawdown, win rate, signal count, and trade count.
+
+## Frontend
+
+Run the frontend from the frontend module:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The Vite dev server proxies API requests to `http://localhost:8080`, so Redis, the worker, and the API server should be running first.
 
 ## Example Output
 
@@ -109,12 +123,11 @@ Example:
 ```text
 backend/cmd/cli          CLI entrypoint
 backend/cmd/api          API server entrypoint
+backend/cmd/worker       Redis worker entrypoint
+backend/internal/queue   Redis queue and result storage
 backend/internal/data    CSV loading and market data models
 backend/internal/backtest strategy, portfolio, benchmark, and metrics logic
 backend/internal/api     HTTP routes and handlers
 data/SPY.csv             sample historical data
+frontend                 Mantine React frontend
 ```
-
-## Next
-
-Next milestone: add Redis-backed queueing and worker processes for asynchronous runs.
