@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"time"
 
 	"backtest-sim/backend/internal/queue"
 	"github.com/redis/go-redis/v9"
@@ -24,6 +25,7 @@ func main() {
 	}
 
 	simulationQueue := queue.NewRedisQueue(client, "queue:simulations")
+	resultStore := queue.NewResultStore(client, 24*time.Hour)
 	job := queue.Job{
 		ID:          "dev-job-1",
 		Ticker:      "SPY",
@@ -32,6 +34,11 @@ func main() {
 		SlippageBps: 0,
 		ShortWindow: 20,
 		LongWindow:  50,
+	}
+
+	// Mark the job as queued before making it available for workers
+	if err := resultStore.SetStatus(ctx, job.ID, queue.StatusQueued); err != nil {
+		log.Fatalf("set queued status: %v", err)
 	}
 
 	// Add one development job so a running worker can dequeue it
