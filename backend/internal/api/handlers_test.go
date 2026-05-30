@@ -1,17 +1,20 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
+
+	"backtest-sim/backend/internal/backtest"
+	"backtest-sim/backend/internal/queue"
+	"github.com/redis/go-redis/v9"
 )
 
 func TestHealthHandler(t *testing.T) {
-	router := NewRouter()
+	_, _, router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
@@ -32,7 +35,7 @@ func TestHealthHandler(t *testing.T) {
 }
 
 func TestHealthHandlerRejectsUnsupportedMethod(t *testing.T) {
-	router := NewRouter()
+	_, _, router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodPost, "/health", nil)
 	rec := httptest.NewRecorder()
@@ -45,7 +48,7 @@ func TestHealthHandlerRejectsUnsupportedMethod(t *testing.T) {
 }
 
 func TestTickersHandler(t *testing.T) {
-	router := NewRouter()
+	_, _, router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/tickers", nil)
 	rec := httptest.NewRecorder()
@@ -66,7 +69,7 @@ func TestTickersHandler(t *testing.T) {
 }
 
 func TestTickersHandlerRejectsUnsupportedMethod(t *testing.T) {
-	router := NewRouter()
+	_, _, router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/tickers", nil)
 	rec := httptest.NewRecorder()
@@ -79,7 +82,7 @@ func TestTickersHandlerRejectsUnsupportedMethod(t *testing.T) {
 }
 
 func TestStrategiesHandler(t *testing.T) {
-	router := NewRouter()
+	_, _, router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/strategies", nil)
 	rec := httptest.NewRecorder()
@@ -101,7 +104,7 @@ func TestStrategiesHandler(t *testing.T) {
 }
 
 func TestStrategiesHandlerRejectsUnsupportedMethod(t *testing.T) {
-	router := NewRouter()
+	_, _, router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/strategies", nil)
 	rec := httptest.NewRecorder()
@@ -113,63 +116,67 @@ func TestStrategiesHandlerRejectsUnsupportedMethod(t *testing.T) {
 	}
 }
 
-func TestRunsHandler(t *testing.T) {
-	dataDir := writeRunTestData(t)
-	router := NewRouterWithDataDir(dataDir)
+func TestRunsHandlerCreatesQueuedRun(t *testing.T) {
+	runQueue, store, router := newTestRouter()
 
 	body := `{
-		"ticker": "SPY",
+		"ticker": "spy",
 		"initial_cash": 10000,
 		"fee_bps": 0,
 		"slippage_bps": 0,
-		"short_window": 2,
-		"long_window": 3
+		"short_window": 20,
+		"long_window": 50
 	}`
 	req := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 
 	router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d with body %q", http.StatusOK, rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusAccepted, rec.Code, rec.Body.String())
 	}
 
-	if contentType := rec.Header().Get("Content-Type"); contentType != "application/json" {
-		t.Fatalf("expected content type application/json, got %q", contentType)
-	}
-
-	var response runResponse
+	var response createRunResponse
 	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
-		t.Fatalf("decode run response: %v", err)
+		t.Fatalf("decode create run response: %v", err)
 	}
 
-	if response.Strategy != "moving_average_crossover" {
-		t.Fatalf("expected moving_average_crossover strategy, got %q", response.Strategy)
+	if response.ID == "" {
+		t.Fatal("expected generated run id")
 	}
 
-	if response.Ticker != "SPY" {
-		t.Fatalf("expected ticker SPY, got %q", response.Ticker)
+	if response.Status != queue.StatusQueued {
+		t.Fatalf("expected queued status, got %q", response.Status)
 	}
 
-	assertAPIFloatEqual(t, response.StrategyFinalValue, 8000)
-	assertAPIFloatEqual(t, response.StrategyReturn, -0.2)
-	assertAPIFloatEqual(t, response.BenchmarkFinalValue, 6000)
-	assertAPIFloatEqual(t, response.BenchmarkReturn, -0.4)
-	assertAPIFloatEqual(t, response.ExcessReturn, 0.2)
-	assertAPIFloatEqual(t, response.MaxDrawdown, 1.0/3.0)
-	assertAPIFloatEqual(t, response.WinRate, 0)
-
-	if response.Signals != 2 {
-		t.Fatalf("expected 2 signals, got %d", response.Signals)
+	if response.StatusURL != "/api/runs/"+response.ID {
+		t.Fatalf("expected status url for run id, got %q", response.StatusURL)
 	}
 
-	if response.Trades != 2 {
-		t.Fatalf("expected 2 trades, got %d", response.Trades)
+	if len(runQueue.jobs) != 1 {
+		t.Fatalf("expected 1 queued job, got %d", len(runQueue.jobs))
+	}
+
+	job := runQueue.jobs[0]
+	if job.ID != response.ID {
+		t.Fatalf("expected queued job id %q, got %q", response.ID, job.ID)
+	}
+
+	if job.Ticker != "SPY" {
+		t.Fatalf("expected normalized ticker SPY, got %q", job.Ticker)
+	}
+
+	if store.statuses[response.ID] != queue.StatusQueued {
+		t.Fatalf("expected stored queued status, got %q", store.statuses[response.ID])
+	}
+
+	if storedJob := store.jobs[response.ID]; storedJob.ID != response.ID {
+		t.Fatalf("expected stored job id %q, got %q", response.ID, storedJob.ID)
 	}
 }
 
 func TestRunsHandlerRejectsUnsupportedMethod(t *testing.T) {
-	router := NewRouterWithDataDir(writeRunTestData(t))
+	_, _, router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/runs", nil)
 	rec := httptest.NewRecorder()
@@ -182,7 +189,7 @@ func TestRunsHandlerRejectsUnsupportedMethod(t *testing.T) {
 }
 
 func TestRunsHandlerRejectsInvalidJSON(t *testing.T) {
-	router := NewRouterWithDataDir(writeRunTestData(t))
+	_, _, router := newTestRouter()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(`{`))
 	rec := httptest.NewRecorder()
@@ -199,13 +206,13 @@ func TestRunsHandlerRejectsInvalidJSON(t *testing.T) {
 }
 
 func TestRunsHandlerRejectsUnsupportedTicker(t *testing.T) {
-	router := NewRouterWithDataDir(writeRunTestData(t))
+	_, _, router := newTestRouter()
 
 	body := `{
 		"ticker": "AAPL",
 		"initial_cash": 10000,
-		"short_window": 2,
-		"long_window": 3
+		"short_window": 20,
+		"long_window": 50
 	}`
 	req := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -222,13 +229,13 @@ func TestRunsHandlerRejectsUnsupportedTicker(t *testing.T) {
 }
 
 func TestRunsHandlerRejectsInvalidBacktestConfig(t *testing.T) {
-	router := NewRouterWithDataDir(writeRunTestData(t))
+	_, _, router := newTestRouter()
 
 	body := `{
 		"ticker": "SPY",
 		"initial_cash": 10000,
-		"short_window": 3,
-		"long_window": 3
+		"short_window": 50,
+		"long_window": 20
 	}`
 	req := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -244,28 +251,265 @@ func TestRunsHandlerRejectsInvalidBacktestConfig(t *testing.T) {
 	}
 }
 
-func writeRunTestData(t *testing.T) string {
-	t.Helper()
+func TestRunStatusHandlerReturnsQueuedRun(t *testing.T) {
+	_, store, router := newTestRouter()
+	job := testRunJob("run_queued")
+	store.jobs[job.ID] = job
+	store.statuses[job.ID] = queue.StatusQueued
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "SPY.csv")
-	content := `date,open,high,low,close,volume
-2020-01-01,5,5,5,5,1000
-2020-01-02,4,4,4,4,1000
-2020-01-03,3,3,3,3,1000
-2020-01-04,4,4,4,4,1000
-2020-01-05,5,5,5,5,1000
-2020-01-06,6,6,6,6,1000
-2020-01-07,5,5,5,5,1000
-2020-01-08,4,4,4,4,1000
-2020-01-09,3,3,3,3,1000
-`
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+job.ID, nil)
+	rec := httptest.NewRecorder()
 
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("write test market data: %v", err)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusOK, rec.Code, rec.Body.String())
 	}
 
-	return dir
+	var response runStatusResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode run status response: %v", err)
+	}
+
+	if response.ID != job.ID {
+		t.Fatalf("expected run id %q, got %q", job.ID, response.ID)
+	}
+
+	if response.Status != queue.StatusQueued {
+		t.Fatalf("expected queued status, got %q", response.Status)
+	}
+
+	if response.Job == nil || response.Job.Ticker != "SPY" {
+		t.Fatalf("expected job metadata for SPY, got %+v", response.Job)
+	}
+
+	if response.Result != nil {
+		t.Fatalf("expected no result for queued run, got %+v", response.Result)
+	}
+}
+
+func TestRunStatusHandlerReturnsCompletedRun(t *testing.T) {
+	_, store, router := newTestRouter()
+	job := testRunJob("run_completed")
+	store.jobs[job.ID] = job
+	store.statuses[job.ID] = queue.StatusCompleted
+	store.results[job.ID] = backtest.BacktestResult{
+		Signals: []backtest.Signal{
+			{Type: backtest.SignalBuy},
+			{Type: backtest.SignalSell},
+		},
+		Strategy: backtest.PortfolioResult{
+			FinalValue: 12000,
+		},
+		Benchmark: backtest.PortfolioResult{
+			FinalValue: 11000,
+		},
+		TotalReturn:     0.2,
+		BenchmarkReturn: 0.1,
+		ExcessReturn:    0.1,
+		MaxDrawdown:     0.05,
+		WinRate:         1,
+		NumberOfTrades:  2,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+job.ID, nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var response runStatusResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode completed run response: %v", err)
+	}
+
+	if response.Status != queue.StatusCompleted {
+		t.Fatalf("expected completed status, got %q", response.Status)
+	}
+
+	if response.Result == nil {
+		t.Fatal("expected completed run result")
+	}
+
+	assertAPIFloatEqual(t, response.Result.StrategyFinalValue, 12000)
+	assertAPIFloatEqual(t, response.Result.StrategyReturn, 0.2)
+	assertAPIFloatEqual(t, response.Result.BenchmarkFinalValue, 11000)
+	assertAPIFloatEqual(t, response.Result.BenchmarkReturn, 0.1)
+	assertAPIFloatEqual(t, response.Result.ExcessReturn, 0.1)
+	assertAPIFloatEqual(t, response.Result.MaxDrawdown, 0.05)
+	assertAPIFloatEqual(t, response.Result.WinRate, 1)
+
+	if response.Result.Signals != 2 {
+		t.Fatalf("expected 2 signals, got %d", response.Result.Signals)
+	}
+
+	if response.Result.Trades != 2 {
+		t.Fatalf("expected 2 trades, got %d", response.Result.Trades)
+	}
+}
+
+func TestRunStatusHandlerReturnsFailedRun(t *testing.T) {
+	_, store, router := newTestRouter()
+	job := testRunJob("run_failed")
+	store.jobs[job.ID] = job
+	store.statuses[job.ID] = queue.StatusFailed
+	store.errors[job.ID] = "load market data: file not found"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+job.ID, nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var response runStatusResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode failed run response: %v", err)
+	}
+
+	if response.Status != queue.StatusFailed {
+		t.Fatalf("expected failed status, got %q", response.Status)
+	}
+
+	if response.Error != "load market data: file not found" {
+		t.Fatalf("expected stored error message, got %q", response.Error)
+	}
+}
+
+func TestRunStatusHandlerReturnsNotFound(t *testing.T) {
+	_, _, router := newTestRouter()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/missing", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+
+	if body := strings.TrimSpace(rec.Body.String()); body != `{"error":"run not found"}` {
+		t.Fatalf("expected run not found response, got %q", body)
+	}
+}
+
+func TestRunStatusHandlerRejectsUnsupportedMethod(t *testing.T) {
+	_, _, router := newTestRouter()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/runs/run_123", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected status %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+}
+
+type fakeRunQueue struct {
+	jobs []queue.Job
+	err  error
+}
+
+func (q *fakeRunQueue) Enqueue(ctx context.Context, job queue.Job) error {
+	if q.err != nil {
+		return q.err
+	}
+
+	q.jobs = append(q.jobs, job)
+	return nil
+}
+
+type fakeRunStore struct {
+	jobs     map[string]queue.Job
+	statuses map[string]queue.JobStatus
+	results  map[string]backtest.BacktestResult
+	errors   map[string]string
+}
+
+func (s *fakeRunStore) SetJob(ctx context.Context, job queue.Job) error {
+	s.jobs[job.ID] = job
+	return nil
+}
+
+func (s *fakeRunStore) GetJob(ctx context.Context, jobID string) (queue.Job, error) {
+	job, ok := s.jobs[jobID]
+	if !ok {
+		return queue.Job{}, redis.Nil
+	}
+
+	return job, nil
+}
+
+func (s *fakeRunStore) SetStatus(ctx context.Context, jobID string, status queue.JobStatus) error {
+	s.statuses[jobID] = status
+	return nil
+}
+
+func (s *fakeRunStore) GetStatus(ctx context.Context, jobID string) (queue.JobStatus, error) {
+	status, ok := s.statuses[jobID]
+	if !ok {
+		return "", redis.Nil
+	}
+
+	return status, nil
+}
+
+func (s *fakeRunStore) GetResult(ctx context.Context, jobID string, destination any) error {
+	result, ok := s.results[jobID]
+	if !ok {
+		return redis.Nil
+	}
+
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+
+	return json.Unmarshal(payload, destination)
+}
+
+func (s *fakeRunStore) SetError(ctx context.Context, jobID string, message string) error {
+	s.errors[jobID] = message
+	return nil
+}
+
+func (s *fakeRunStore) GetError(ctx context.Context, jobID string) (string, error) {
+	message, ok := s.errors[jobID]
+	if !ok {
+		return "", redis.Nil
+	}
+
+	return message, nil
+}
+
+func newTestRouter() (*fakeRunQueue, *fakeRunStore, http.Handler) {
+	runQueue := &fakeRunQueue{}
+	store := &fakeRunStore{
+		jobs:     make(map[string]queue.Job),
+		statuses: make(map[string]queue.JobStatus),
+		results:  make(map[string]backtest.BacktestResult),
+		errors:   make(map[string]string),
+	}
+
+	return runQueue, store, NewRouter(runQueue, store)
+}
+
+func testRunJob(id string) queue.Job {
+	return queue.Job{
+		ID:          id,
+		Ticker:      "SPY",
+		InitialCash: 10000,
+		FeeBps:      0,
+		SlippageBps: 0,
+		ShortWindow: 20,
+		LongWindow:  50,
+	}
 }
 
 func assertAPIFloatEqual(t *testing.T, got float64, want float64) {
