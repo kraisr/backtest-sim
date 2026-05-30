@@ -1,0 +1,66 @@
+:root {
+  color-scheme: dark;
+  background: #07090f;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #07090f;
+}
+
+.app-header {
+  background: rgba(12, 15, 22, 0.94);
+  border-bottom: 1px solid #252b34;
+  backdrop-filter: blur(14px);
+}
+
+.app-main {
+  background: transparent;
+}
+
+.panel,
+.metric-card {
+  background: #11151d;
+  border: 1px solid #252c37;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.24);
+}
+
+.status-panel {
+  position: relative;
+  min-height: 306px;
+}
+
+.empty-state {
+  min-height: 170px;
+}
+
+.metric-card {
+  min-height: 128px;
+}
+
+.metric-value {
+  margin-top: 8px;
+  font-size: 1.55rem;
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.detail-row {
+  min-height: 28px;
+}
+
+.detail-value {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 48em) {
+  .metric-card {
+    min-height: 112px;
+  }
+}
