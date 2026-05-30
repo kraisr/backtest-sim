@@ -30,6 +30,43 @@ func NewResultStore(client *redis.Client, ttl time.Duration) *ResultStore {
 	}
 }
 
+// SetJob stores the original job request so the API can show run metadata later
+func (s *ResultStore) SetJob(ctx context.Context, job Job) error {
+	if err := validateJobID(job.ID); err != nil {
+		return err
+	}
+
+	payload, err := json.Marshal(job)
+	if err != nil {
+		return fmt.Errorf("marshal job: %w", err)
+	}
+
+	if err := s.client.Set(ctx, jobKey(job.ID), payload, s.ttl).Err(); err != nil {
+		return fmt.Errorf("set job: %w", err)
+	}
+
+	return nil
+}
+
+// GetJob returns the original job request for a run
+func (s *ResultStore) GetJob(ctx context.Context, jobID string) (Job, error) {
+	if err := validateJobID(jobID); err != nil {
+		return Job{}, err
+	}
+
+	payload, err := s.client.Get(ctx, jobKey(jobID)).Bytes()
+	if err != nil {
+		return Job{}, fmt.Errorf("get job: %w", err)
+	}
+
+	var job Job
+	if err := json.Unmarshal(payload, &job); err != nil {
+		return Job{}, fmt.Errorf("unmarshal job: %w", err)
+	}
+
+	return job, nil
+}
+
 // SetStatus stores the current lifecycle status for a job
 func (s *ResultStore) SetStatus(ctx context.Context, jobID string, status JobStatus) error {
 	if err := validateJobID(jobID); err != nil {
@@ -126,6 +163,10 @@ func validateJobID(jobID string) error {
 	}
 
 	return nil
+}
+
+func jobKey(jobID string) string {
+	return fmt.Sprintf("job:%s:request", jobID)
 }
 
 func statusKey(jobID string) string {

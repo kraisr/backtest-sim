@@ -36,7 +36,11 @@ func main() {
 		LongWindow:  50,
 	}
 
-	// Mark the job as queued before making it available for workers
+	// Store the job request and mark it as queued before making it available for workers
+	if err := resultStore.SetJob(ctx, job); err != nil {
+		log.Fatalf("set job request: %v", err)
+	}
+
 	if err := resultStore.SetStatus(ctx, job.ID, queue.StatusQueued); err != nil {
 		log.Fatalf("set queued status: %v", err)
 	}

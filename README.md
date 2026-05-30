@@ -10,7 +10,7 @@ BacktestSim is a Go backtesting project for running a Moving Average Crossover s
 - Compare against buy-and-hold
 - Calculate return, max drawdown, win rate, and excess return
 - Run everything from the terminal
-- Expose basic HTTP API endpoints for local backtest runs
+- Queue HTTP API runs through Redis and process them with a worker
 
 ## Run
 
@@ -36,9 +36,16 @@ go run ./cmd/cli -h
 
 ## API
 
-Run the local API server from the backend module:
+Start Redis from the project root:
 
 ```bash
+docker compose up -d redis
+```
+
+Run the worker and API server from the backend module in separate terminals:
+
+```bash
+go run ./cmd/worker
 go run ./cmd/api
 ```
 
@@ -49,7 +56,8 @@ Available endpoints:
 | `GET` | `/health` | Returns API health status |
 | `GET` | `/api/tickers` | Lists supported tickers |
 | `GET` | `/api/strategies` | Lists supported strategies |
-| `POST` | `/api/runs` | Runs a synchronous Moving Average Crossover backtest |
+| `POST` | `/api/runs` | Queues an asynchronous Moving Average Crossover backtest |
+| `GET` | `/api/runs/{id}` | Returns run status, result, or error details |
 
 `POST /api/runs` expects a JSON body with:
 

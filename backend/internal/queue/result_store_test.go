@@ -33,6 +33,33 @@ func TestResultStoreSetGetStatus(t *testing.T) {
 	}
 }
 
+func TestResultStoreSetGetJob(t *testing.T) {
+	store, _, jobID := newTestResultStore(t)
+	ctx := context.Background()
+	want := Job{
+		ID:          jobID,
+		Ticker:      "SPY",
+		InitialCash: 10000,
+		FeeBps:      5,
+		SlippageBps: 2,
+		ShortWindow: 20,
+		LongWindow:  50,
+	}
+
+	if err := store.SetJob(ctx, want); err != nil {
+		t.Fatalf("set job: %v", err)
+	}
+
+	got, err := store.GetJob(ctx, jobID)
+	if err != nil {
+		t.Fatalf("get job: %v", err)
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected job %+v, got %+v", want, got)
+	}
+}
+
 func TestResultStoreSetGetResult(t *testing.T) {
 	store, _, jobID := newTestResultStore(t)
 	ctx := context.Background()
@@ -108,7 +135,7 @@ func newTestResultStore(t *testing.T) (*ResultStore, *redis.Client, string) {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		_ = client.Del(ctx, statusKey(jobID), resultKey(jobID), errorKey(jobID)).Err()
+		_ = client.Del(ctx, jobKey(jobID), statusKey(jobID), resultKey(jobID), errorKey(jobID)).Err()
 		_ = client.Close()
 	})
 
