@@ -30,6 +30,43 @@ func NewResultStore(client *redis.Client, ttl time.Duration) *ResultStore {
 	}
 }
 
+// SetSweep stores a parameter sweep and the run ids it created
+func (s *ResultStore) SetSweep(ctx context.Context, sweep Sweep) error {
+	if err := validateJobID(sweep.ID); err != nil {
+		return err
+	}
+
+	payload, err := json.Marshal(sweep)
+	if err != nil {
+		return fmt.Errorf("marshal sweep: %w", err)
+	}
+
+	if err := s.client.Set(ctx, sweepKey(sweep.ID), payload, s.ttl).Err(); err != nil {
+		return fmt.Errorf("set sweep: %w", err)
+	}
+
+	return nil
+}
+
+// GetSweep returns the original sweep request and generated run ids
+func (s *ResultStore) GetSweep(ctx context.Context, sweepID string) (Sweep, error) {
+	if err := validateJobID(sweepID); err != nil {
+		return Sweep{}, err
+	}
+
+	payload, err := s.client.Get(ctx, sweepKey(sweepID)).Bytes()
+	if err != nil {
+		return Sweep{}, fmt.Errorf("get sweep: %w", err)
+	}
+
+	var sweep Sweep
+	if err := json.Unmarshal(payload, &sweep); err != nil {
+		return Sweep{}, fmt.Errorf("unmarshal sweep: %w", err)
+	}
+
+	return sweep, nil
+}
+
 // SetJob stores the original job request so the API can show run metadata later
 func (s *ResultStore) SetJob(ctx context.Context, job Job) error {
 	if err := validateJobID(job.ID); err != nil {
@@ -163,6 +200,10 @@ func validateJobID(jobID string) error {
 	}
 
 	return nil
+}
+
+func sweepKey(sweepID string) string {
+	return fmt.Sprintf("sweep:%s:request", sweepID)
 }
 
 func jobKey(jobID string) string {
