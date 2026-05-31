@@ -28,9 +28,10 @@ func main() {
 
 	simulationQueue := queue.NewRedisQueue(client, "queue:simulations")
 	resultStore := queue.NewResultStore(client, 24*time.Hour)
+	metricsStore := queue.NewMetricsStore(client, "queue:simulations")
 
 	// Build the API router and attach all registered routes
-	router := api.NewRouter(simulationQueue, resultStore)
+	router := api.NewRouterWithMetrics(simulationQueue, resultStore, metricsStore)
 
 	log.Println("api listening on :8080")
 	if err := http.ListenAndServe(":8080", router); err != nil {

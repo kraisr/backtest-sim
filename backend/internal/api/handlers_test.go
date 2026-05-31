@@ -411,6 +411,174 @@ func TestRunStatusHandlerRejectsUnsupportedMethod(t *testing.T) {
 	}
 }
 
+func TestSweepsHandlerCreatesQueuedRuns(t *testing.T) {
+	runQueue, store, router := newTestRouter()
+
+	body := `{
+		"ticker": "SPY",
+		"initial_cash": 10000,
+		"fee_bps": 0,
+		"slippage_bps": 0,
+		"short_windows": [5, 10],
+		"long_windows": [20, 50]
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/sweeps", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusAccepted, rec.Code, rec.Body.String())
+	}
+
+	var response createSweepResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode create sweep response: %v", err)
+	}
+
+	if response.ID == "" {
+		t.Fatal("expected generated sweep id")
+	}
+
+	if response.RunCount != 4 {
+		t.Fatalf("expected 4 runs, got %d", response.RunCount)
+	}
+
+	if len(runQueue.jobs) != 4 {
+		t.Fatalf("expected 4 queued jobs, got %d", len(runQueue.jobs))
+	}
+
+	if len(store.sweeps) != 1 {
+		t.Fatalf("expected 1 stored sweep, got %d", len(store.sweeps))
+	}
+
+	for _, job := range runQueue.jobs {
+		if job.SweepID != response.ID {
+			t.Fatalf("expected sweep id %q, got %q", response.ID, job.SweepID)
+		}
+
+		if store.statuses[job.ID] != queue.StatusQueued {
+			t.Fatalf("expected queued status for job %s, got %q", job.ID, store.statuses[job.ID])
+		}
+	}
+}
+
+func TestSweepsHandlerRejectsEmptyWindowGrid(t *testing.T) {
+	_, _, router := newTestRouter()
+
+	body := `{
+		"ticker": "SPY",
+		"initial_cash": 10000,
+		"short_windows": [50],
+		"long_windows": [20]
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/sweeps", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	if !strings.Contains(rec.Body.String(), "at least one valid short/long window pair") {
+		t.Fatalf("expected invalid grid error, got %q", rec.Body.String())
+	}
+}
+
+func TestSweepStatusHandlerReturnsAggregateStatus(t *testing.T) {
+	_, store, router := newTestRouter()
+	sweep := queue.Sweep{
+		ID:     "sweep_1",
+		Ticker: "SPY",
+		RunIDs: []string{
+			"run_1",
+			"run_2",
+		},
+	}
+	store.sweeps[sweep.ID] = sweep
+
+	firstJob := testRunJob("run_1")
+	secondJob := testRunJob("run_2")
+	store.jobs[firstJob.ID] = firstJob
+	store.jobs[secondJob.ID] = secondJob
+	store.statuses[firstJob.ID] = queue.StatusCompleted
+	store.statuses[secondJob.ID] = queue.StatusRunning
+	store.results[firstJob.ID] = backtest.BacktestResult{
+		Strategy: backtest.PortfolioResult{
+			FinalValue: 12000,
+		},
+		Benchmark: backtest.PortfolioResult{
+			FinalValue: 10000,
+		},
+		TotalReturn:     0.2,
+		BenchmarkReturn: 0,
+		ExcessReturn:    0.2,
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sweeps/"+sweep.ID, nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d with body %q", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var response sweepStatusResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode sweep status response: %v", err)
+	}
+
+	if response.Status != "running" {
+		t.Fatalf("expected running sweep, got %q", response.Status)
+	}
+
+	if response.Completed != 1 || response.Running != 1 {
+		t.Fatalf("expected 1 completed and 1 running, got completed=%d running=%d", response.Completed, response.Running)
+	}
+
+	if response.BestRun == nil || response.BestRun.ID != firstJob.ID {
+		t.Fatalf("expected best run %q, got %+v", firstJob.ID, response.BestRun)
+	}
+}
+
+func TestMetricsHandlerReturnsPrometheusText(t *testing.T) {
+	runQueue := &fakeRunQueue{}
+	store := newFakeRunStore()
+	metrics := &fakeRunMetrics{
+		snapshot: queue.MetricsSnapshot{
+			QueueDepth:             3,
+			JobsQueued:             5,
+			JobsStarted:            4,
+			JobsCompleted:          2,
+			JobsFailed:             1,
+			JobDurationCount:       3,
+			JobDurationSecondsSum:  1.25,
+			QueueLatencyCount:      4,
+			QueueLatencySecondsSum: 0.5,
+		},
+	}
+	router := NewRouterWithMetrics(runQueue, store, metrics)
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	if !strings.Contains(rec.Body.String(), `backtestsim_queue_depth 3`) {
+		t.Fatalf("expected queue depth metric, got %q", rec.Body.String())
+	}
+
+	if !strings.Contains(rec.Body.String(), `backtestsim_jobs_total{status="completed"} 2`) {
+		t.Fatalf("expected completed job metric, got %q", rec.Body.String())
+	}
+}
+
 type fakeRunQueue struct {
 	jobs []queue.Job
 	err  error
@@ -426,10 +594,25 @@ func (q *fakeRunQueue) Enqueue(ctx context.Context, job queue.Job) error {
 }
 
 type fakeRunStore struct {
+	sweeps   map[string]queue.Sweep
 	jobs     map[string]queue.Job
 	statuses map[string]queue.JobStatus
 	results  map[string]backtest.BacktestResult
 	errors   map[string]string
+}
+
+func (s *fakeRunStore) SetSweep(ctx context.Context, sweep queue.Sweep) error {
+	s.sweeps[sweep.ID] = sweep
+	return nil
+}
+
+func (s *fakeRunStore) GetSweep(ctx context.Context, sweepID string) (queue.Sweep, error) {
+	sweep, ok := s.sweeps[sweepID]
+	if !ok {
+		return queue.Sweep{}, redis.Nil
+	}
+
+	return sweep, nil
 }
 
 func (s *fakeRunStore) SetJob(ctx context.Context, job queue.Job) error {
@@ -488,16 +671,37 @@ func (s *fakeRunStore) GetError(ctx context.Context, jobID string) (string, erro
 	return message, nil
 }
 
+type fakeRunMetrics struct {
+	queued   int
+	snapshot queue.MetricsSnapshot
+}
+
+func (m *fakeRunMetrics) RecordJobQueued(ctx context.Context) error {
+	m.queued++
+	return nil
+}
+
+func (m *fakeRunMetrics) Snapshot(ctx context.Context) (queue.MetricsSnapshot, error) {
+	return m.snapshot, nil
+}
+
 func newTestRouter() (*fakeRunQueue, *fakeRunStore, http.Handler) {
 	runQueue := &fakeRunQueue{}
+	store := newFakeRunStore()
+
+	return runQueue, store, NewRouter(runQueue, store)
+}
+
+func newFakeRunStore() *fakeRunStore {
 	store := &fakeRunStore{
+		sweeps:   make(map[string]queue.Sweep),
 		jobs:     make(map[string]queue.Job),
 		statuses: make(map[string]queue.JobStatus),
 		results:  make(map[string]backtest.BacktestResult),
 		errors:   make(map[string]string),
 	}
 
-	return runQueue, store, NewRouter(runQueue, store)
+	return store
 }
 
 func testRunJob(id string) queue.Job {

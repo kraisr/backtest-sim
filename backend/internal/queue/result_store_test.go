@@ -60,6 +60,35 @@ func TestResultStoreSetGetJob(t *testing.T) {
 	}
 }
 
+func TestResultStoreSetGetSweep(t *testing.T) {
+	store, _, sweepID := newTestResultStore(t)
+	ctx := context.Background()
+	want := Sweep{
+		ID:           sweepID,
+		Ticker:       "SPY",
+		InitialCash:  10000,
+		FeeBps:       1,
+		SlippageBps:  2,
+		ShortWindows: []int{5, 10},
+		LongWindows:  []int{20, 50},
+		RunIDs:       []string{"run-1", "run-2"},
+		CreatedAt:    time.Date(2026, 5, 30, 12, 0, 0, 0, time.UTC),
+	}
+
+	if err := store.SetSweep(ctx, want); err != nil {
+		t.Fatalf("set sweep: %v", err)
+	}
+
+	got, err := store.GetSweep(ctx, sweepID)
+	if err != nil {
+		t.Fatalf("get sweep: %v", err)
+	}
+
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected sweep %+v, got %+v", want, got)
+	}
+}
+
 func TestResultStoreSetGetResult(t *testing.T) {
 	store, _, jobID := newTestResultStore(t)
 	ctx := context.Background()
@@ -135,7 +164,7 @@ func newTestResultStore(t *testing.T) (*ResultStore, *redis.Client, string) {
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		_ = client.Del(ctx, jobKey(jobID), statusKey(jobID), resultKey(jobID), errorKey(jobID)).Err()
+		_ = client.Del(ctx, sweepKey(jobID), jobKey(jobID), statusKey(jobID), resultKey(jobID), errorKey(jobID)).Err()
 		_ = client.Close()
 	})
 

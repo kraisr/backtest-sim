@@ -11,6 +11,8 @@ BacktestSim is a Go backtesting project for running a Moving Average Crossover s
 - Calculate return, max drawdown, win rate, and excess return
 - Run everything from the terminal
 - Queue HTTP API runs through Redis and process them with a worker
+- Run parameter sweeps across multiple moving-average windows
+- Expose Prometheus-format queue and worker metrics
 
 ## Run
 
@@ -45,7 +47,7 @@ docker compose up -d redis
 Run the worker and API server from the backend module in separate terminals:
 
 ```bash
-go run ./cmd/worker
+go run ./cmd/worker -workers 4
 go run ./cmd/api
 ```
 
@@ -58,6 +60,9 @@ Available endpoints:
 | `GET` | `/api/strategies` | Lists supported strategies |
 | `POST` | `/api/runs` | Queues an asynchronous Moving Average Crossover backtest |
 | `GET` | `/api/runs/{id}` | Returns run status, result, or error details |
+| `POST` | `/api/sweeps` | Queues many runs from short/long window grids |
+| `GET` | `/api/sweeps/{id}` | Returns aggregate and per-run sweep status |
+| `GET` | `/metrics` | Returns Prometheus-format queue and worker metrics |
 
 `POST /api/runs` expects a JSON body with:
 
@@ -75,6 +80,32 @@ Available endpoints:
 The create response includes a run id, queued status, and status URL. Poll the status URL to see whether the run is queued, running, completed, or failed.
 
 Completed run results include strategy return, benchmark return, excess return, max drawdown, win rate, signal count, and trade count.
+
+`POST /api/sweeps` expects a JSON body with:
+
+```json
+{
+  "ticker": "SPY",
+  "initial_cash": 10000,
+  "fee_bps": 0,
+  "slippage_bps": 0,
+  "short_windows": [5, 10, 20],
+  "long_windows": [50, 100, 200]
+}
+```
+
+Sweeps create one queued run for each valid short/long pair where the short window is smaller than the long window.
+
+## Benchmarking
+
+Run a local sweep benchmark after Redis, the API, and one or more workers are running:
+
+```bash
+cd backend
+go run ./cmd/sweep-benchmark -shorts 5,10,20,30 -longs 50,100,150,200
+```
+
+Run it once with `go run ./cmd/worker -workers 1`, then again with more workers, such as `-workers 4`, to calculate speedup across the same number of simulations.
 
 ## Frontend
 
@@ -124,6 +155,7 @@ Example:
 backend/cmd/cli          CLI entrypoint
 backend/cmd/api          API server entrypoint
 backend/cmd/worker       Redis worker entrypoint
+backend/cmd/sweep-benchmark async sweep benchmark command
 backend/internal/queue   Redis queue and result storage
 backend/internal/data    CSV loading and market data models
 backend/internal/backtest strategy, portfolio, benchmark, and metrics logic
