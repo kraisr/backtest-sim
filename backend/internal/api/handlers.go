@@ -128,16 +128,23 @@ type runJobResponse struct {
 }
 
 type runResultResponse struct {
-	Strategy            string  `json:"strategy"`
-	StrategyFinalValue  float64 `json:"strategy_final_value"`
-	StrategyReturn      float64 `json:"strategy_return"`
-	BenchmarkFinalValue float64 `json:"benchmark_final_value"`
-	BenchmarkReturn     float64 `json:"benchmark_return"`
-	ExcessReturn        float64 `json:"excess_return"`
-	MaxDrawdown         float64 `json:"max_drawdown"`
-	WinRate             float64 `json:"win_rate"`
-	Signals             int     `json:"signals"`
-	Trades              int     `json:"trades"`
+	Strategy             string                     `json:"strategy"`
+	StrategyFinalValue   float64                    `json:"strategy_final_value"`
+	StrategyReturn       float64                    `json:"strategy_return"`
+	BenchmarkFinalValue  float64                    `json:"benchmark_final_value"`
+	BenchmarkReturn      float64                    `json:"benchmark_return"`
+	ExcessReturn         float64                    `json:"excess_return"`
+	MaxDrawdown          float64                    `json:"max_drawdown"`
+	WinRate              float64                    `json:"win_rate"`
+	Signals              int                        `json:"signals"`
+	Trades               int                        `json:"trades"`
+	StrategyEquityCurve  []equityCurvePointResponse `json:"strategy_equity_curve,omitempty"`
+	BenchmarkEquityCurve []equityCurvePointResponse `json:"benchmark_equity_curve,omitempty"`
+}
+
+type equityCurvePointResponse struct {
+	Date   string  `json:"date"`
+	Equity float64 `json:"equity"`
 }
 
 type errorResponse struct {
@@ -358,7 +365,7 @@ func RunStatusHandler(store RunStore) http.HandlerFunc {
 			response.Job = buildRunJobResponse(job)
 		}
 
-		// Completed runs include compact result metrics for the UI
+		// Completed run detail includes summary metrics plus equity curves for charts
 		if status == queue.StatusCompleted {
 			var result backtest.BacktestResult
 			if err := store.GetResult(r.Context(), runID, &result); err != nil {
@@ -366,7 +373,7 @@ func RunStatusHandler(store RunStore) http.HandlerFunc {
 				return
 			}
 
-			response.Result = buildRunResultResponse(result)
+			response.Result = buildRunResultResponse(result, true)
 		}
 
 		// Failed runs include the stored error message when available
@@ -598,7 +605,7 @@ func buildSweepRunStatus(ctx context.Context, store RunStore, runID string) (swe
 			return sweepRunStatusResponse{}, fmt.Errorf("load sweep run result")
 		}
 
-		response.Result = buildRunResultResponse(result)
+		response.Result = buildRunResultResponse(result, false)
 	}
 
 	if status == queue.StatusFailed {
@@ -701,8 +708,8 @@ func buildRunJobResponse(job queue.Job) *runJobResponse {
 	}
 }
 
-func buildRunResultResponse(result backtest.BacktestResult) *runResultResponse {
-	return &runResultResponse{
+func buildRunResultResponse(result backtest.BacktestResult, includeEquityCurves bool) *runResultResponse {
+	response := &runResultResponse{
 		Strategy:            "moving_average_crossover",
 		StrategyFinalValue:  result.Strategy.FinalValue,
 		StrategyReturn:      result.TotalReturn,
@@ -714,6 +721,25 @@ func buildRunResultResponse(result backtest.BacktestResult) *runResultResponse {
 		Signals:             len(result.Signals),
 		Trades:              result.NumberOfTrades,
 	}
+
+	if includeEquityCurves {
+		response.StrategyEquityCurve = buildEquityCurveResponse(result.Strategy.EquityCurve)
+		response.BenchmarkEquityCurve = buildEquityCurveResponse(result.Benchmark.EquityCurve)
+	}
+
+	return response
+}
+
+func buildEquityCurveResponse(points []backtest.EquityPoint) []equityCurvePointResponse {
+	response := make([]equityCurvePointResponse, 0, len(points))
+	for _, point := range points {
+		response = append(response, equityCurvePointResponse{
+			Date:   point.Date.Format("2006-01-02"),
+			Equity: point.Equity,
+		})
+	}
+
+	return response
 }
 
 func newRunID() (string, error) {

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"backtest-sim/backend/internal/backtest"
 	"backtest-sim/backend/internal/queue"
@@ -300,9 +301,17 @@ func TestRunStatusHandlerReturnsCompletedRun(t *testing.T) {
 		},
 		Strategy: backtest.PortfolioResult{
 			FinalValue: 12000,
+			EquityCurve: []backtest.EquityPoint{
+				{Date: time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC), Equity: 10000},
+				{Date: time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC), Equity: 12000},
+			},
 		},
 		Benchmark: backtest.PortfolioResult{
 			FinalValue: 11000,
+			EquityCurve: []backtest.EquityPoint{
+				{Date: time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC), Equity: 10000},
+				{Date: time.Date(2024, 1, 3, 0, 0, 0, 0, time.UTC), Equity: 11000},
+			},
 		},
 		TotalReturn:     0.2,
 		BenchmarkReturn: 0.1,
@@ -349,6 +358,22 @@ func TestRunStatusHandlerReturnsCompletedRun(t *testing.T) {
 	if response.Result.Trades != 2 {
 		t.Fatalf("expected 2 trades, got %d", response.Result.Trades)
 	}
+
+	if len(response.Result.StrategyEquityCurve) != 2 {
+		t.Fatalf("expected 2 strategy equity points, got %d", len(response.Result.StrategyEquityCurve))
+	}
+
+	if response.Result.StrategyEquityCurve[1].Date != "2024-01-03" {
+		t.Fatalf("expected second strategy equity date 2024-01-03, got %q", response.Result.StrategyEquityCurve[1].Date)
+	}
+
+	assertAPIFloatEqual(t, response.Result.StrategyEquityCurve[1].Equity, 12000)
+
+	if len(response.Result.BenchmarkEquityCurve) != 2 {
+		t.Fatalf("expected 2 benchmark equity points, got %d", len(response.Result.BenchmarkEquityCurve))
+	}
+
+	assertAPIFloatEqual(t, response.Result.BenchmarkEquityCurve[1].Equity, 11000)
 }
 
 func TestRunStatusHandlerReturnsFailedRun(t *testing.T) {
@@ -540,6 +565,10 @@ func TestSweepStatusHandlerReturnsAggregateStatus(t *testing.T) {
 
 	if response.BestRun == nil || response.BestRun.ID != firstJob.ID {
 		t.Fatalf("expected best run %q, got %+v", firstJob.ID, response.BestRun)
+	}
+
+	if response.BestRun.Result != nil && response.BestRun.Result.StrategyEquityCurve != nil {
+		t.Fatal("expected sweep result to omit strategy equity curve")
 	}
 }
 
