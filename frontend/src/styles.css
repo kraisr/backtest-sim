@@ -80,6 +80,64 @@ body {
   flex: 0 0 auto;
 }
 
+.equity-chart-wrap {
+  display: grid;
+  gap: 12px;
+}
+
+.equity-chart {
+  display: block;
+  width: 100%;
+  min-height: 280px;
+  border-radius: 6px;
+  background: #0d121a;
+  border: 1px solid #252c37;
+}
+
+.chart-grid-line {
+  stroke: rgba(255, 255, 255, 0.09);
+  stroke-width: 1;
+}
+
+.chart-axis-label {
+  fill: #9099a8;
+  font-size: 13px;
+}
+
+.strategy-line,
+.benchmark-line {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.strategy-line {
+  stroke: #12b886;
+}
+
+.benchmark-line {
+  stroke: #748ffc;
+}
+
+.equity-chart-footer {
+  min-height: 28px;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+.strategy-dot {
+  background: #12b886;
+}
+
+.benchmark-dot {
+  background: #748ffc;
+}
+
 .chart-empty {
   min-height: 260px;
 }

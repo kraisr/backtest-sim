@@ -34,12 +34,14 @@ import {
   IconTrendingUp,
   IconTrophy,
 } from '@tabler/icons-react';
-import { createSweep, fetchHealth, fetchSweep } from './api';
+import { createSweep, fetchHealth, fetchRun, fetchSweep } from './api';
 import type {
   CreateSweepResponse,
+  EquityCurvePoint,
   JobStatus,
   RunJob,
   RunResult,
+  RunStatusResponse,
   SweepRequest,
   SweepRunStatusResponse,
   SweepStatus,
@@ -75,6 +77,15 @@ type CompletedSweepRun = SweepRunStatusResponse & {
   result: RunResult;
 };
 
+type ChartBounds = {
+  width: number;
+  height: number;
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+};
+
 const maxSweepRuns = 250;
 const rankedResultsPageSize = 10;
 
@@ -93,9 +104,11 @@ function App() {
   const [sweepDetails, setSweepDetails] = useState<SweepStatusResponse | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
+  const [bestRunDetailError, setBestRunDetailError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [visibleRankCount, setVisibleRankCount] = useState(rankedResultsPageSize);
+  const [bestRunDetails, setBestRunDetails] = useState<RunStatusResponse | null>(null);
 
   const form = useForm<SweepFormValues>({
     initialValues: defaultSweepValues,
@@ -216,6 +229,40 @@ function App() {
     };
   }, [activeSweep?.id]);
 
+  useEffect(() => {
+    const runID = bestRun?.id;
+    if (!runID || bestRun.status !== 'completed') {
+      setBestRunDetails(null);
+      setBestRunDetailError(null);
+      return;
+    }
+
+    const stableRunID = runID;
+    let cancelled = false;
+
+    // Fetch the full run response because sweep rows intentionally stay compact
+    async function loadBestRunDetails() {
+      try {
+        const response = await fetchRun(stableRunID);
+        if (!cancelled) {
+          setBestRunDetails(response);
+          setBestRunDetailError(null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setBestRunDetails(null);
+          setBestRunDetailError(error instanceof Error ? error.message : 'Unable to fetch best run details');
+        }
+      }
+    }
+
+    void loadBestRunDetails();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bestRun?.id, bestRun?.status]);
+
   async function handleSubmit(values: SweepFormValues) {
     setSubmitError(null);
     setPollError(null);
@@ -223,6 +270,8 @@ function App() {
     setSweepDetails(null);
     setLastUpdated(null);
     setVisibleRankCount(rankedResultsPageSize);
+    setBestRunDetails(null);
+    setBestRunDetailError(null);
 
     try {
       // Convert the form strings into the numeric grid expected by the API
@@ -453,6 +502,10 @@ function App() {
           </SimpleGrid>
 
           <Paper className="panel" p="lg" radius="md">
+            <EquityCurvePanel run={bestRunDetails} fallbackRun={bestRun} error={bestRunDetailError} />
+          </Paper>
+
+          <Paper className="panel" p="lg" radius="md">
             <ReturnHeatmap runs={completedRuns} bestRunID={bestRun?.id} />
           </Paper>
 
@@ -622,6 +675,137 @@ function DetailRow({ label, value }: { label: string; value: string }) {
         {value}
       </Text>
     </Group>
+  );
+}
+
+function EquityCurvePanel({
+  run,
+  fallbackRun,
+  error,
+}: {
+  run: RunStatusResponse | null;
+  fallbackRun?: SweepRunStatusResponse;
+  error: string | null;
+}) {
+  const result = run?.result;
+  const strategyCurve = result?.strategy_equity_curve ?? [];
+  const benchmarkCurve = result?.benchmark_equity_curve ?? [];
+  const canRenderChart = strategyCurve.length > 1 && benchmarkCurve.length > 1;
+  const missingCurveData = Boolean(result) && !canRenderChart;
+
+  return (
+    <Stack gap="md">
+      <Group justify="space-between" align="flex-start">
+        <Box>
+          <Text fw={700} size="lg">
+            Equity curve
+          </Text>
+          <Text size="sm" c="dimmed">
+            {fallbackRun?.job ? `${formatWindowPair(fallbackRun.job)} vs buy and hold` : 'Best run vs benchmark'}
+          </Text>
+        </Box>
+        <Group gap="xs">
+          <Badge color="teal" variant="light">
+            Strategy
+          </Badge>
+          <Badge color="indigo" variant="light">
+            Benchmark
+          </Badge>
+        </Group>
+      </Group>
+
+      {error ? (
+        <Alert color="red" icon={<IconAlertCircle size={18} />} radius="md">
+          {error}
+        </Alert>
+      ) : null}
+
+      {canRenderChart ? (
+        <EquityLineChart strategyCurve={strategyCurve} benchmarkCurve={benchmarkCurve} />
+      ) : missingCurveData ? (
+        <EmptyVisualization label="Full run details loaded, but equity curve data is missing from the API response" />
+      ) : (
+        <EmptyVisualization label="Run a sweep to chart the best equity curve" />
+      )}
+    </Stack>
+  );
+}
+
+function EquityLineChart({
+  strategyCurve,
+  benchmarkCurve,
+}: {
+  strategyCurve: EquityCurvePoint[];
+  benchmarkCurve: EquityCurvePoint[];
+}) {
+  const sampledStrategy = sampleEquityCurve(strategyCurve, 420);
+  const sampledBenchmark = sampleEquityCurve(benchmarkCurve, 420);
+  const equities = [...sampledStrategy, ...sampledBenchmark].map((point) => point.equity);
+  const minEquity = Math.min(...equities);
+  const maxEquity = Math.max(...equities);
+  const padding = Math.max((maxEquity - minEquity) * 0.08, maxEquity * 0.02);
+  const domainMin = Math.max(0, minEquity - padding);
+  const domainMax = maxEquity + padding;
+  const chart = {
+    width: 1000,
+    height: 340,
+    left: 76,
+    right: 28,
+    top: 24,
+    bottom: 42,
+  };
+  const plotWidth = chart.width - chart.left - chart.right;
+  const plotHeight = chart.height - chart.top - chart.bottom;
+  const strategyPoints = toPolylinePoints(sampledStrategy, domainMin, domainMax, chart, plotWidth, plotHeight);
+  const benchmarkPoints = toPolylinePoints(sampledBenchmark, domainMin, domainMax, chart, plotWidth, plotHeight);
+  const gridValues = [domainMax, domainMin + (domainMax - domainMin) / 2, domainMin];
+  const firstDate = strategyCurve[0]?.date ?? benchmarkCurve[0]?.date;
+  const lastDate = strategyCurve[strategyCurve.length - 1]?.date ?? benchmarkCurve[benchmarkCurve.length - 1]?.date;
+  const finalStrategy = strategyCurve[strategyCurve.length - 1]?.equity;
+  const finalBenchmark = benchmarkCurve[benchmarkCurve.length - 1]?.equity;
+
+  return (
+    <Box className="equity-chart-wrap">
+      <svg className="equity-chart" viewBox={`0 0 ${chart.width} ${chart.height}`} role="img">
+        {gridValues.map((value) => {
+          const y = yForEquity(value, domainMin, domainMax, chart, plotHeight);
+
+          return (
+            <g key={value}>
+              <line x1={chart.left} x2={chart.width - chart.right} y1={y} y2={y} className="chart-grid-line" />
+              <text x={chart.left - 12} y={y + 4} textAnchor="end" className="chart-axis-label">
+                {formatCompactCurrency(value)}
+              </text>
+            </g>
+          );
+        })}
+
+        <polyline points={benchmarkPoints} className="benchmark-line" />
+        <polyline points={strategyPoints} className="strategy-line" />
+
+        <text x={chart.left} y={chart.height - 10} className="chart-axis-label">
+          {formatDateShort(firstDate)}
+        </text>
+        <text x={chart.width - chart.right} y={chart.height - 10} textAnchor="end" className="chart-axis-label">
+          {formatDateShort(lastDate)}
+        </text>
+      </svg>
+
+      <Group gap="lg" className="equity-chart-footer">
+        <Group gap="xs">
+          <Box className="legend-dot strategy-dot" />
+          <Text size="sm" fw={700}>
+            Strategy {finalStrategy ? formatCurrency(finalStrategy) : '-'}
+          </Text>
+        </Group>
+        <Group gap="xs">
+          <Box className="legend-dot benchmark-dot" />
+          <Text size="sm" fw={700}>
+            Benchmark {finalBenchmark ? formatCurrency(finalBenchmark) : '-'}
+          </Text>
+        </Group>
+      </Group>
+    </Box>
   );
 }
 
@@ -871,6 +1055,47 @@ function formatWindowPair(job: { short_window: number; long_window: number }) {
   return `MA ${job.short_window} / ${job.long_window}`;
 }
 
+function sampleEquityCurve(points: EquityCurvePoint[], maxPoints: number) {
+  if (points.length <= maxPoints) {
+    return points;
+  }
+
+  const sampled: EquityCurvePoint[] = [];
+  const step = (points.length - 1) / (maxPoints - 1);
+
+  for (let i = 0; i < maxPoints; i++) {
+    sampled.push(points[Math.round(i * step)]);
+  }
+
+  return sampled;
+}
+
+function toPolylinePoints(
+  points: EquityCurvePoint[],
+  minEquity: number,
+  maxEquity: number,
+  chart: ChartBounds,
+  plotWidth: number,
+  plotHeight: number,
+) {
+  return points
+    .map((point, index) => {
+      const x = chart.left + (index / Math.max(points.length - 1, 1)) * plotWidth;
+      const y = yForEquity(point.equity, minEquity, maxEquity, chart, plotHeight);
+
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+}
+
+function yForEquity(equity: number, minEquity: number, maxEquity: number, chart: ChartBounds, plotHeight: number) {
+  if (maxEquity === minEquity) {
+    return chart.top + plotHeight / 2;
+  }
+
+  return chart.top + (1 - (equity - minEquity) / (maxEquity - minEquity)) * plotHeight;
+}
+
 function windowPairKey(shortWindow: number, longWindow: number) {
   return `${shortWindow}:${longWindow}`;
 }
@@ -963,8 +1188,28 @@ function formatCurrency(value: number) {
   }).format(value);
 }
 
+function formatCompactCurrency(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
 function formatPercent(value: number) {
   return `${(value * 100).toFixed(2)}%`;
+}
+
+function formatDateShort(value?: string) {
+  if (!value) {
+    return '-';
+  }
+
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(`${value}T00:00:00`));
 }
 
 export default App;

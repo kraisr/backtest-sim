@@ -53,6 +53,13 @@ export type RunResult = {
   win_rate: number;
   signals: number;
   trades: number;
+  strategy_equity_curve?: EquityCurvePoint[];
+  benchmark_equity_curve?: EquityCurvePoint[];
+};
+
+export type EquityCurvePoint = {
+  date: string;
+  equity: number;
 };
 
 export type RunStatusResponse = {
