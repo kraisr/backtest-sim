@@ -1,4 +1,12 @@
-import type { ApiError, CreateRunResponse, RunRequest, RunStatusResponse } from './types';
+import type {
+  ApiError,
+  CreateRunResponse,
+  CreateSweepResponse,
+  RunRequest,
+  RunStatusResponse,
+  SweepRequest,
+  SweepStatusResponse,
+} from './types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -34,4 +42,15 @@ export async function createRun(request: RunRequest): Promise<CreateRunResponse>
 
 export async function fetchRun(id: string): Promise<RunStatusResponse> {
   return requestJSON<RunStatusResponse>(`/api/runs/${id}`);
+}
+
+export async function createSweep(request: SweepRequest): Promise<CreateSweepResponse> {
+  return requestJSON<CreateSweepResponse>('/api/sweeps', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export async function fetchSweep(id: string): Promise<SweepStatusResponse> {
+  return requestJSON<SweepStatusResponse>(`/api/sweeps/${id}`);
 }
