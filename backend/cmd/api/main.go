@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"backtest-sim/backend/internal/api"
@@ -11,12 +12,20 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+func getenv(key string, fallback string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
 func main() {
 	ctx := context.Background()
 
 	// Create Redis client used by the API to enqueue and inspect runs
 	client := redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379",
+		Addr:     getenv("REDIS_ADDR", "localhost:6379"),
 		Password: "",
 		DB:       0,
 	})

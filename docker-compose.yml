@@ -2,5 +2,55 @@ services:
   redis:
     image: redis:7-alpine
     container_name: backtestsim-redis
+    restart: unless-stopped
+    networks:
+      - backtestsim
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: backtestsim-backend:latest
+    container_name: backtestsim-api
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis:6379
+    command: ["backtestsim-api"]
+    depends_on:
+      - redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:8081:8080"
+    networks:
+      - backtestsim
+      - web
+
+  worker:
+    image: backtestsim-backend:latest
+    container_name: backtestsim-worker
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: redis:6379
+    command: ["backtestsim-worker", "-redis-addr=redis:6379", "-workers=2"]
+    depends_on:
+      - redis
+    networks:
+      - backtestsim
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: backtestsim-frontend:latest
+    container_name: backtestsim-frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "127.0.0.1:3001:80"
+    networks:
+      - web
+
+networks:
+  backtestsim:
+  web:
+    external: true
