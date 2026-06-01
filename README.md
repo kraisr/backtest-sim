@@ -1,18 +1,18 @@
 # BacktestSim
 
-BacktestSim is a Go backtesting project for running a Moving Average Crossover strategy on historical stock data.
+BacktestSim is a Go backtesting platform for running a Moving Average Crossover strategy on historical stock data.
+
+## Demo
+
+https://github.com/user-attachments/assets/a2cc2b0d-9f9d-45be-b9e6-c39f691b4e32
 
 ## Features
 
-- Load OHLCV data from CSV
 - Generate Moving Average Crossover BUY/SELL signals
 - Simulate a long-only portfolio
 - Compare against buy-and-hold
 - Calculate return, max drawdown, win rate, and excess return
-- Run everything from the terminal
-- Queue HTTP API runs through Redis and process them with a worker
 - Run parameter sweeps across multiple moving-average windows
-- Expose Prometheus-format queue and worker metrics
 
 ## Run
 
@@ -95,17 +95,6 @@ Completed run results include strategy return, benchmark return, excess return, 
 ```
 
 Sweeps create one queued run for each valid short/long pair where the short window is smaller than the long window.
-
-## Benchmarking
-
-Run a local sweep benchmark after Redis, the API, and one or more workers are running:
-
-```bash
-cd backend
-go run ./cmd/sweep-benchmark -shorts 5,10,20,30 -longs 50,100,150,200
-```
-
-Run it once with `go run ./cmd/worker -workers 1`, then again with more workers, such as `-workers 4`, to calculate speedup across the same number of simulations.
 
 ## Frontend
 
