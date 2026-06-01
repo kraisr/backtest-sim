@@ -24,6 +24,12 @@ body {
   background: transparent;
 }
 
+.content-shell {
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
 .panel,
 .metric-card {
   background: #11151d;
@@ -38,6 +44,12 @@ body {
 
 .empty-state {
   min-height: 170px;
+}
+
+.count-pill {
+  background: #0d121a;
+  border: 1px solid #252c37;
+  min-height: 70px;
 }
 
 .metric-card {
@@ -57,6 +69,49 @@ body {
 
 .detail-value {
   overflow-wrap: anywhere;
+}
+
+.best-run-row td {
+  background: rgba(18, 184, 134, 0.08);
+}
+
+.best-run-icon {
+  color: #fab005;
+  flex: 0 0 auto;
+}
+
+.chart-empty {
+  min-height: 260px;
+}
+
+.heatmap-scroll {
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.heatmap-grid {
+  display: grid;
+  gap: 8px;
+  align-items: stretch;
+  min-width: 760px;
+}
+
+.heatmap-axis-corner {
+  min-height: 24px;
+}
+
+.heatmap-cell {
+  display: grid;
+  place-items: center;
+  min-height: 64px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 6px;
+  color: #f8fafc;
+}
+
+.heatmap-cell-best {
+  outline: 2px solid #fab005;
+  outline-offset: 1px;
 }
 
 @media (max-width: 48em) {
